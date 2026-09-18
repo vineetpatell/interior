@@ -1,0 +1,34 @@
+# Panchi Interior — Roadmap
+
+- [x] Warm luxury interior direction with travertine, walnut, brass and editorial serif type
+- [x] Door-led scroll journey: entry door opens into living, hall, kitchen and bedroom chapters
+- [x] Add generated luxury interior visuals for each room chapter
+- [x] Show company details contextually during the room journey
+- [x] Give doors 01–05 distinct transitions with close-up to wide room reveals
+- [x] Apply the dark obsidian, walnut and brass theme across the website
+- [x] Dark editorial design tokens (obsidian, smoked glass, brass, serif + mono)
+- [x] Floating capsule navbar + detailed studio footer (Indore coordinates, Maps link)
+- [x] Home: 3D hero (Spline scene, lazy + Suspense ambient loader, canvas room fallback, paused off-screen)
+- [x] Home: typography overlay, subtitle, studio badge
+- [x] Home: 3-phase scroll journey (350vh sticky, motion depth transitions, mono meters)
+- [x] Home: interactive 3D sector cards
+- [x] /projects: category filters + project detail modals
+- [x] /turnkey: 4-stage process + material swatches
+- [x] /studio: craftsmanship metrics
+- [x] /consultation: intake form routing to WhatsApp
+- [x] Reduced-motion + mobile stacked journey, will-change only while active
+- [x] Per-route head() metadata
+- [x] About (/about), Our Work (/work), Services (/services) and Contact (/contact) pages with researched copy + visuals
+- [x] New About/Our Work/Services/Contact buttons in navbar and footer
+- [x] Contact page: Google Map embed + WhatsApp enquiry form
+- [x] Universal luxury palette: deep emerald, champagne gold, ivory on dark theme
+- [x] Add an explicit Home link to the desktop navbar
+- [x] Build a moving luxury image/video carousel above the homepage door journey
+- [x] Give doors 01–05 distinct Art Deco Modernist surfaces, marble frames and crafted hardware
+- [ ] Expand the homepage journey with text-free ultra-wide room moments and door-close exits
+- [ ] Add more premium interior visuals across the site
+- [ ] Redesign the footer as a visual, editorial studio close
+- [ ] Add detailed work process plus vision and mission to About
+- [ ] Add page-specific quotes and FAQs across every content page
+- [ ] BLOCKED: real WhatsApp number, studio address and Google Maps CID needed from the user
+      (placeholders currently in src/lib/studio.ts)
