@@ -254,69 +254,133 @@ function DoorLeaves({ scene, openness }: { scene: Scene; openness: MotionValue<n
 }
 
 /**
- * One scroll-driven door stage. `openness` is a single 0 → 1 → 0 curve feeding
- * every leaf, which is what makes the open and close halves exact mirrors. The
- * only React state is `phase`, used purely to mount and unmount copy so no faded
- * text is ever left sitting in the DOM.
+ * One chapter living inside the shared cam viewport. The parent
+ * `CinematicJourney` owns a single scroll track; each slot derives a local
+ * 0→1 `chapter` phase plus a global cross-fade `presence` and a slow
+ * push-in `camScale` / lateral `camX`. Intro copy always fades fully,
+ * leaves split to a clean room, then close into the next frame.
  */
-function StagedChapter({ scene, index }: { scene: Scene; index: number }) {
-  const ref = useRef<HTMLElement>(null);
+function ChapterSlot({
+  scene,
+  index,
+  journey,
+}: {
+  scene: Scene;
+  index: number;
+  journey: MotionValue<number>;
+}) {
+  const total = SCENES.length;
+  const start = index / total;
+  const end = (index + 1) / total;
+  // Overlap windows in journey units — neighbours bleed into each other so the
+  // handoff is a true cross-fade, never a cut to empty glass.
+  const inA = index === 0 ? 0 : clamp01(start - 0.045);
+  const inB = clamp01(start + 0.045);
+  const outA = clamp01(end - 0.045);
+  const outB = index === total - 1 ? 1 : clamp01(end + 0.045);
   const [phase, setPhase] = useState<DoorPhase>("intro");
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
+  const [live, setLive] = useState(index === 0);
+  // Mount flags follow opacity — not phase boundaries — so copy always fades
+  // to absolute zero before unmounting. No pops, no stranded faded text.
+  const [showIntro, setShowIntro] = useState(true);
+  const [showRoom, setShowRoom] = useState(false);
+
+  const chapter = useTransform(journey, [start, end], [0, 1]);
+  // Cinematic cam-view: slow depth push + gentle lateral drift, alternating
+  // direction per door so the walkthrough sways like a handheld rig.
+  const presence = useTransform(journey, [inA, inB, outA, outB], [0, 1, 1, 0]);
+  const camScale = useTransform(journey, [inA, (start + end) / 2, outB], [1.1, 1, 1.13]);
+  const camX = useTransform(
+    journey,
+    [inA, outB],
+    index % 2 === 0 ? ["-1.6%", "1.6%"] : ["1.6%", "-1.6%"],
+  );
+  // Fly-through veil peaks exactly on the boundary — the outgoing frame dives
+  // through darkness into the next door. Always hooked; ignored on the finale.
+  const veil = useTransform(
+    journey,
+    [clamp01(end - 0.032), end, clamp01(end + 0.032)],
+    [0, 0.6, 0],
+  );
+  const showVeil = index < total - 1;
 
   // One 0 → 1 → 0 curve drives every leaf: fully shut through Phase 1, fully open
   // across Phase 3, shut again exactly at the end of Phase 4.
-  const openness = useTransform(scrollYProgress, LEAF_OPENNESS_KEYFRAMES, [0, 1, 1, 0]);
+  const openness = useTransform(chapter, LEAF_OPENNESS_KEYFRAMES, [0, 1, 1, 0]);
 
   // Phase 1 copy holds over the closed leaves, then clears the seam during the
   // first part of Phase 2 — gone well before the leaves are half open.
-  const introOpacity = useTransform(scrollYProgress, INTRO_COPY_KEYFRAMES, [1, 1, 0]);
-  const introY = useTransform(scrollYProgress, [0, DOOR_TIMELINE.introGone], [0, -28]);
+  const introOpacity = useTransform(chapter, INTRO_COPY_KEYFRAMES, [1, 1, 0]);
+  const introY = useTransform(chapter, [0, DOOR_TIMELINE.introGone], [0, -28]);
 
   // Phase 3 copy begins only after `leavesOpen`, so it can never arrive while the
   // seam is still travelling, and it is gone before the leaves meet again.
-  const editorialOpacity = useTransform(scrollYProgress, ROOM_COPY_KEYFRAMES, [0, 1, 1, 0]);
+  const editorialOpacity = useTransform(chapter, ROOM_COPY_KEYFRAMES, [0, 1, 1, 0]);
   const editorialY = useTransform(
-    scrollYProgress,
+    chapter,
     [DOOR_TIMELINE.phase2End, DOOR_TIMELINE.copyIn],
     [34, 0],
   );
 
   // The interior settles as the leaves open, then holds perfectly still through
   // Phase 3 — a clean room, no drift while the copy is being read.
-  const imageScale = useTransform(scrollYProgress, [0, DOOR_TIMELINE.leavesOpen], [1.26, 1]);
-  const imageY = useTransform(scrollYProgress, [0, DOOR_TIMELINE.leavesOpen], ["2.4%", "0%"]);
-  const imageBlur = useTransform(
-    scrollYProgress,
-    [0, DOOR_TIMELINE.leavesOpen],
-    ["blur(9px)", "blur(0px)"],
-  );
+  const imageScale = useTransform(chapter, [0, DOOR_TIMELINE.leavesOpen], [1.26, 1]);
+  const imageY = useTransform(chapter, [0, DOOR_TIMELINE.leavesOpen], ["2.4%", "0%"]);
   const scrim = useTransform(
-    scrollYProgress,
+    chapter,
     [0, DOOR_TIMELINE.phase1End, DOOR_TIMELINE.leavesOpen, DOOR_TIMELINE.leavesClose, 1],
     [0.5, 0.34, 0.14, 0.14, 0.46],
   );
   const sweep = useTransform(
-    scrollYProgress,
+    chapter,
     [DOOR_TIMELINE.sweepStart, DOOR_TIMELINE.sweepEnd],
     ["-120%", "130%"],
   );
   const railOpacity = useTransform(
-    scrollYProgress,
+    chapter,
     [0, 0.2, DOOR_TIMELINE.phase2End, DOOR_TIMELINE.phase3End, 1],
     [1, 1, 0.55, 0.55, 1],
   );
 
   // The only stateful part of the machine: which copy is allowed to exist in the
   // DOM at all. Guarded so a scroll pass only re-renders on a real phase change.
-  useMotionValueEvent(scrollYProgress, "change", (value) => {
+  // Presence promotion keeps off-screen doors out of the compositor for zero lag.
+  useMotionValueEvent(chapter, "change", (value) => {
     const next = resolveDoorPhase(value);
     setPhase((current) => (current === next ? current : next));
   });
+  useMotionValueEvent(introOpacity, "change", (v) => {
+    setShowIntro((cur) => {
+      const on = v > 0.01;
+      return cur === on ? cur : on;
+    });
+  });
+  useMotionValueEvent(editorialOpacity, "change", (v) => {
+    setShowRoom((cur) => {
+      const on = v > 0.01;
+      return cur === on ? cur : on;
+    });
+  });
+  useMotionValueEvent(presence, "change", (value) => {
+    setLive((current) => {
+      const on = value > 0.01;
+      return current === on ? current : on;
+    });
+  });
 
   return (
-    <section ref={ref} className="relative bg-background" style={{ height: SECTION_HEIGHT }}>
-      <div className="sticky top-0 flex h-[100svh] items-center overflow-hidden bg-espresso">
+    <motion.div
+      className="absolute inset-0 overflow-hidden bg-espresso will-change-transform"
+      style={{
+        opacity: presence,
+        scale: camScale,
+        x: camX,
+        zIndex: 10 + index,
+        visibility: live ? "visible" : "hidden",
+        pointerEvents: live ? "auto" : "none",
+      }}
+    >
+      <div className="absolute inset-0 flex h-full items-center overflow-hidden">
         <motion.img
           src={scene.image}
           alt={`${scene.room} by Panchi Interior`}
@@ -324,7 +388,7 @@ function StagedChapter({ scene, index }: { scene: Scene; index: number }) {
           height={1008}
           loading={index === 0 ? "eager" : "lazy"}
           className="absolute inset-0 size-full object-cover will-change-transform"
-          style={{ scale: imageScale, y: imageY, filter: imageBlur }}
+          style={{ scale: imageScale, y: imageY }}
         />
         <motion.div className="absolute inset-0 bg-espresso" style={{ opacity: scrim }} />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,color-mix(in_oklab,var(--espresso)_82%,transparent),transparent_48%,color-mix(in_oklab,var(--espresso)_58%,transparent))]" />
@@ -340,7 +404,7 @@ function StagedChapter({ scene, index }: { scene: Scene; index: number }) {
 
         {/* Phase 3 — second editorial set. Sits at z-10, beneath the leaves at z-20,
             so the closing doors pass in front of it, and unmounts once faded. */}
-        {phase === "room" && (
+        {showRoom && (
           <motion.div
             className="absolute inset-0 z-10 flex items-end px-6 pb-14 sm:px-10 sm:pb-20"
             style={{ opacity: editorialOpacity, y: editorialY }}
@@ -374,7 +438,7 @@ function StagedChapter({ scene, index }: { scene: Scene; index: number }) {
         {/* Phase 1 — door title and intro copy over the closed leaves. Sits at
             z-50, above the leaves, and is removed from the DOM the instant it has
             faded so Phase 3 starts on empty glass. */}
-        {phase === "intro" && (
+        {showIntro && (
           <motion.div
             className="pointer-events-none absolute inset-0 z-50 grid place-items-center px-6"
             style={{ opacity: introOpacity, y: introY }}
@@ -401,8 +465,17 @@ function StagedChapter({ scene, index }: { scene: Scene; index: number }) {
           <span>{scene.room}</span>
           <span>Phase {DOOR_PHASE_NO[phase]} / 04</span>
         </motion.div>
+        {/* Cinematic fly-through veil — peaks on the chapter boundary so the
+            outgoing cam dives through darkness into the next door. */}
+        {showVeil && (
+          <motion.div
+            aria-hidden="true"
+            className="cam-vignette pointer-events-none absolute inset-0 z-40 bg-espresso/80"
+            style={{ opacity: veil }}
+          />
+        )}
       </div>
-    </section>
+    </motion.div>
   );
 }
 
@@ -416,7 +489,7 @@ function StackedChapter({ scene, index }: { scene: Scene; index: number }) {
   const label = ROMAN[scene.no];
 
   return (
-    <section className="bg-background">
+    <section className="bg-espresso">
       {/* Phase 1 — closed leaves, door title and intro copy */}
       <div className="relative flex min-h-[62svh] items-center justify-center overflow-hidden bg-espresso px-6 py-20">
         <div className="absolute inset-0 grid grid-cols-2">
@@ -533,18 +606,80 @@ function JourneyIntro() {
   );
 }
 
+/**
+ * The cinematic journey — ONE tall scroll track driving ONE sticky cam
+ * viewport. `journey` runs 0→1 across all five doors; each ChapterSlot
+ * cross-fades, push-zooms and sways within its window while its leaves run
+ * the shared 0→1→0 lifecycle. No abrupt jumps, no isolated sections — a
+ * continuous architectural walkthrough with zero white anywhere.
+ */
+function CinematicJourney() {
+  const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
+  const journey = useTransform(scrollYProgress, (v) => clamp01(v));
+  const [active, setActive] = useState(0);
+
+  // Master dolly — the whole rig pushes forward across the full walkthrough.
+  const dolly = useTransform(journey, [0, 1], [1, 1.07]);
+  const meter = useTransform(journey, [0, 1], ["0%", "100%"]);
+  const activeLabel = useTransform(journey, (v) => {
+    const i = Math.min(SCENES.length - 1, Math.max(0, Math.floor(v * SCENES.length)));
+    return `Door 0${i + 1} / 0${SCENES.length}`;
+  });
+
+  useMotionValueEvent(journey, "change", (v) => {
+    const i = Math.min(SCENES.length - 1, Math.max(0, Math.floor(v * SCENES.length)));
+    setActive((cur) => (cur === i ? cur : i));
+  });
+
+  return (
+    <div ref={ref} className="relative bg-espresso" style={{ height: JOURNEY_HEIGHT }}>
+      <div className="sticky top-0 h-[100svh] overflow-hidden bg-espresso">
+        <motion.div className="absolute inset-0 will-change-transform" style={{ scale: dolly }}>
+          {SCENES.map((scene, index) => (
+            <ChapterSlot key={scene.no} scene={scene} index={index} journey={journey} />
+          ))}
+        </motion.div>
+
+        {/* Global cam HUD — chapter pips + progress rail, always over the glass. */}
+        <div className="pointer-events-none absolute left-5 top-1/2 z-50 hidden -translate-y-1/2 flex-col items-center gap-3 sm:flex">
+          {SCENES.map((scene, i) => (
+            <span
+              key={scene.no}
+              className={`font-mono text-[9px] tracking-[0.2em] transition-colors duration-300 ${
+                i === active ? "text-brass" : "text-ivory/30"
+              }`}
+            >
+              {`0${i + 1}`}
+            </span>
+          ))}
+          <div className="relative h-40 w-px overflow-hidden bg-ivory/15">
+            <motion.div className="absolute left-0 top-0 w-px bg-brass" style={{ height: meter }} />
+          </div>
+          <motion.span className="font-mono text-[9px] tracking-[0.2em] text-brass">
+            {activeLabel}
+          </motion.span>
+        </div>
+
+        <div className="pointer-events-none absolute bottom-6 left-0 right-0 z-50 flex items-center justify-between px-6 font-mono text-[10px] uppercase tracking-[0.24em] text-ivory/50 sm:px-10">
+          <span>Architectural walkthrough · continuous cam</span>
+          <span className="text-brass/80">Scroll to fly through ↓</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DoorJourney() {
   const staged = useStagedJourney();
 
   return (
-    <div className="bg-background">
+    <div className="bg-espresso">
       <JourneyIntro />
-      {SCENES.map((scene, index) =>
-        staged ? (
-          <StagedChapter key={scene.no} scene={scene} index={index} />
-        ) : (
-          <StackedChapter key={scene.no} scene={scene} index={index} />
-        ),
+      {staged ? (
+        <CinematicJourney />
+      ) : (
+        SCENES.map((scene, index) => <StackedChapter key={scene.no} scene={scene} index={index} />)
       )}
     </div>
   );
